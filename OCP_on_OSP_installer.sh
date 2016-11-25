@@ -14,12 +14,12 @@ echo -e "\n##### Welcome to OpenShift on OpenStack quick installer #####\n\n"
 ##### Fill these variables based on your own environment
 
 #Get OpenShift project ID running "openstack project list"
-OCP_TENANT_ID=<INSERT HERE YOUR PROJECT ID>
+OCP_TENANT_ID=59b2dc5bf6d347d39f247ed18d0dba6c
 
 #DNS server details
-NAMESERVER=<INSERT HERE YOUR DNS IP>
+NAMESERVER=192.168.1.14
 
-#Public network details (optional if this is already configured)
+#Public network details
 PUBLIC_NETWORK_NAME=public_network
 PUBLIC_SUBNET_NAME=public_subnet
 PUBLIC_NETWORK_POOL_START=192.168.1.200
@@ -31,14 +31,14 @@ PUBLIC_SUBNET_RANGE=192.168.1.0/24
 OCP_NETWORK_NAME=openshift
 OCP_NETWORK_RANGE=172.18.10.0/24
 
-#RHEL image details (optional if this is already configured)
-RHEL_FILE_NAME=rhel-guest-image-xxxx.qcow2
+#RHEL image details
+RHEL_FILE_NAME=rhel-guest-image-7.3-35.x86_64.qcow2
 RHEL_IMAGE_NAME=rhel73
 
 #OpenShift instances details
-OCP_DOMAIN=<insert here the domain for your OpenShift instances>
+OCP_DOMAIN=ageslab.com
 OCP_BASTION="bastion"
-OCP_LB="lb"
+OCP_LB="lbmaster lbapps"
 OCP_MASTERS="master1 master2 master3"
 OCP_INFRANODES="infranode1 infranode2"
 OCP_APPNODES="appnode1 appnode2"
@@ -235,14 +235,16 @@ if [ "$answer" = "y" ]; then
   nova boot --flavor ocpbastion --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
   --nic net-name=$OCP_NETWORK_NAME-network \
   --security-groups bastion-sg \
-  --user-data ./cloudinit/bastion.yaml \
+  --user-data ./cloudinit/$OCP_BASTION.yaml \
   $OCP_BASTION.$OCP_DOMAIN
-  echo -e "\n##### Creating load balancer instance\n"
-  nova boot --flavor ocplb --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-  --nic net-name=$OCP_NETWORK_NAME-network \
-  --security-groups lb-sg \
-  --user-data ./cloudinit/lb.yaml \
-  $OCP_LB.$OCP_DOMAIN
+  echo -e "\n##### Creating load balancers\n"
+  for HOST in $OCP_LB ; do
+    nova boot --flavor ocplb --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
+    --nic net-name=$OCP_NETWORK_NAME-network \
+    --security-groups lb-sg \
+    --user-data ./cloudinit/$HOST.yaml \
+    $HOST.$OCP_DOMAIN
+  done
   echo -e "\n##### Creating master nodes instance(s)\n"
   if [ "$MASTER_INSTANCES_DOCKER_VOLUMES" = "true" ]; then
     for HOST in $OCP_MASTERS ; do
@@ -282,6 +284,17 @@ if [ "$answer" = "y" ]; then
     --block-device source=volume,dest=volume,device=vdb,id=${VOLUMEID} \
     --user-data ./cloudinit/$HOST.yaml \
     $HOST.$OCP_DOMAIN
+  done
+fi
+
+##### Floating IPs creation
+read -p "Do you wish to create floating IPs for the load balancers? (y/n) " answer
+if [ "$answer" = "y" ]; then
+  source ./keystonerc_openshift
+  echo -e "\n##### Creating floating IPs\n"
+  for HOST in $OCP_LB ; do  
+    FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
+    nova floating-ip-associate $HOST.$OCP_DOMAIN $FLOATING_IP
   done
 fi
 
