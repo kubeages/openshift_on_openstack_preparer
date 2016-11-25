@@ -1,2 +1,13 @@
-# openshift_on_openstack_quick_installer
-Modular installer to make easier the installation of OpenShift Container Platform on OpenStack
+# openshift_on_openstack_preparation_script
+Modular script to make easier the preparation for the deployment of OpenShift Container Platform on OpenStack.
+
+In order to make it work, please copy this script into a folder with these another files:
+- the OpenStack RC files (for Openshift project and optionally for Admin project)
+- the QCOW2 RHEL file for image creation (optional if this is already created on the environment)
+
+Releases:
+v0.1 - This release creates everything that is needed to prepare an OCP on OpenStack deployment. 
+
+Note: 
+- This script doesn´t install prereqs or OCP itself. It´s conceived to help to prepare the environment for OCP deployment.
+- This script is not intended for flannel based deployments. Anyway, it can be easily adjusted for that purpose.
