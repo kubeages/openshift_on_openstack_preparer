@@ -297,7 +297,7 @@ if [ "$answer" = "y" ]; then
     nova floating-ip-associate $HOST.$OCP_DOMAIN $FLOATING_IP
   done
   FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
-  nova floating-ip-associate $OCPBASTION.$OCP_DOMAIN $FLOATING_IP
+  nova floating-ip-associate $OCP_BASTION.$OCP_DOMAIN $FLOATING_IP
 fi
 
 echo -e "\n##### Thanks for using OpenShift on OpenStack quick installer #####\n\n"
