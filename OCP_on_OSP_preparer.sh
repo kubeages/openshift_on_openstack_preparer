@@ -288,14 +288,16 @@ if [ "$answer" = "y" ]; then
 fi
 
 ##### Floating IPs creation
-read -p "Do you wish to create floating IPs for the load balancers? (y/n) " answer
+read -p "Do you wish to create floating IPs for the load balancers and bastion instance? (y/n) " answer
 if [ "$answer" = "y" ]; then
   source ./keystonerc_openshift
   echo -e "\n##### Creating floating IPs\n"
-  for HOST in $OCP_LB ; do  
+  for HOST in $OCP_LB ; do
     FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
     nova floating-ip-associate $HOST.$OCP_DOMAIN $FLOATING_IP
   done
+  FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
+  nova floating-ip-associate $OCPBASTION.$OCP_DOMAIN $FLOATING_IP
 fi
 
 echo -e "\n##### Thanks for using OpenShift on OpenStack quick installer #####\n\n"
