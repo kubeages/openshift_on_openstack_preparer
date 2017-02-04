@@ -175,6 +175,8 @@ neutron security-group-rule-create lb-sg \
 neutron security-group-rule-create lb-sg \
 --protocol tcp --port-range-min 443 --port-range-max 443
 neutron security-group-rule-create lb-sg \
+--protocol tcp --port-range-min 8443 --port-range-max 8443
+neutron security-group-rule-create lb-sg \
 --protocol tcp --port-range-min 80 --port-range-max 80
 neutron security-group-rule-create lb-sg \
 --protocol tcp --port-range-min 9000 --port-range-max 9000
