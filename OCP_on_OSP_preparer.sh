@@ -1,7 +1,8 @@
+#!/bin/bash
 ##### Quick OCP on OSP preparation installer
 ##### Opinionated deployment tool to make OCP deployment on OSP a simpler thing
-##### v0.1 by Antonio Gallego - agallego@redhat.com
-##### Red Hat - 2016
+##### v0.2 by Antonio Gallego - agallego@redhat.com
+##### Red Hat - 2017
 #####
 ##### Files that need to be place in the same path that this installer:
 ##### - keystonerc_admin - credentials to login into admin project
@@ -13,8 +14,11 @@ echo -e "\n##### Welcome to OpenShift on OpenStack quick installer #####\n\n"
 ##### Configuration part
 ##### Fill these variables based on your own environment
 
-#Get OpenShift project ID running "openstack project list"
-OCP_TENANT_ID=59b2dc5bf6d347d39f247ed18d0dba6c
+#Get OpenShift project ID. Rename to another TENANT_NAME value, if different than 'openshift'
+source ./keystonerc_openshift
+TENANT_NAME=openshift
+OCP_TENANT_ID=$(openstack project show $TENANT_NAME | grep ' id ' | awk '{print $4}')
+echo -e "\nTENANT ID FOR TENANT $TENANT_NAME : $OCP_TENANT_ID\n"
 
 #DNS server details
 NAMESERVER=192.168.1.14
@@ -78,9 +82,9 @@ if [ "$answer" = "y" ]; then
   source ./keystonerc_admin
   nova flavor-create --is-public false ocpbastion auto 2048 20 1
   nova flavor-create --is-public false ocplb auto 4096 20 1
-  nova flavor-create --is-public false ocpmaster auto 8192 30 2
+  nova flavor-create --is-public false ocpmaster auto 16384 30 2
   nova flavor-create --is-public false ocpinfranode auto 8192 30 2
-  nova flavor-create --is-public false ocpappnode auto 8192 30 1
+  nova flavor-create --is-public false ocpappnode auto 8192 30 2
 
   nova flavor-access-add ocpbastion $OCP_TENANT_ID
   nova flavor-access-add ocplb $OCP_TENANT_ID
@@ -124,7 +128,7 @@ hostname: $1.$2
 fqdn: $1.$2
 EOF
 }
-mkdir cloudinit
+rm -rf ./cloudinit; mkdir cloudinit
 for HOST in $OCP_ALLNODES
 do
   generate_userdata ${HOST} ${OCP_DOMAIN} > ./cloudinit/${HOST}.yaml
@@ -186,15 +190,12 @@ neutron security-group-rule-create master-sg --protocol icmp
 neutron security-group-rule-create master-sg \
 --protocol tcp --port-range-min 22 --port-range-max 22 \
 --remote-group-id bastion-sg
-neutron security-group-rule-create master-sg \
---protocol tcp --port-range-min 10250 --port-range-max 10250 \
---remote-group-id master-sg
-for PORT in 8443 8444 8053 4789 2379 10255 9000 2380 5404 5405 2224 24224
+for PORT in 2379 2380 8443 443 8053 10250 9200 9300
 do
 neutron security-group-rule-create master-sg \
 --protocol tcp --port-range-min $PORT --port-range-max $PORT
 done
-for PORT in 10255 24224
+for PORT in 8053 4789
 do
 neutron security-group-rule-create master-sg \
 --protocol udp --port-range-min $PORT --port-range-max $PORT
@@ -205,14 +206,13 @@ neutron security-group-rule-create infranode-sg --protocol icmp
 neutron security-group-rule-create infranode-sg \
 --protocol tcp --port-range-min 22 --port-range-max 22 \
 --remote-group-id bastion-sg
-for PORT in 80 443 4789 10255
+for PORT in 80 443 1936 10250 9200 9300
 do
 neutron security-group-rule-create infranode-sg \
 --protocol tcp --port-range-min $PORT --port-range-max $PORT
 done
 neutron security-group-rule-create infranode-sg \
---protocol udp --port-range-min 10255 --port-range-max 10255 \
---remote-group-id master-sg
+--protocol udp --port-range-min 4789 --port-range-max 4789
 echo -e "\n##### Creating security group for appnodes\n"
 neutron security-group-create appnode-sg
 neutron security-group-rule-create appnode-sg --protocol icmp
@@ -220,13 +220,10 @@ neutron security-group-rule-create appnode-sg \
 --protocol tcp --port-range-min 22 --port-range-max 22 \
 --remote-group-id bastion-sg
 neutron security-group-rule-create appnode-sg \
---protocol tcp --port-range-min 10255 --port-range-max 10255 \
+--protocol tcp --port-range-min 10250 --port-range-max 10250 \
 --remote-group-id master-sg
 neutron security-group-rule-create appnode-sg \
---protocol udp --port-range-min 10255 --port-range-max 10255 \
---remote-group-id master-sg
-neutron security-group-rule-create appnode-sg \
---protocol tcp --port-range-min 4789 --port-range-max 4789
+--protocol udp --port-range-min 4789 --port-range-max 4789
 fi
 
 ##### OpenShift instances creation
@@ -234,44 +231,46 @@ read -p "Do you wish to create the OpenShift nodes? (y/n) " answer
 if [ "$answer" = "y" ]; then
   source ./keystonerc_openshift
   echo -e "\n##### Creating bastion instance\n"
+  NETWORKID=$(neutron net-show openshift-network | grep ' id ' | awk '{print $4}')
   nova boot --flavor ocpbastion --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-  --nic net-name=$OCP_NETWORK_NAME-network \
+  --nic net-id=$NETWORKID \
   --security-groups bastion-sg \
   --user-data ./cloudinit/$OCP_BASTION.yaml \
   $OCP_BASTION.$OCP_DOMAIN
   echo -e "\n##### Creating load balancers\n"
   for HOST in $OCP_LB ; do
+    NETWORKID=$(neutron net-show openshift-network | grep ' id ' | awk '{print $4}')
     nova boot --flavor ocplb --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-    --nic net-name=$OCP_NETWORK_NAME-network \
+    --nic net-id=$NETWORKID \
     --security-groups lb-sg \
     --user-data ./cloudinit/$HOST.yaml \
     $HOST.$OCP_DOMAIN
   done
   echo -e "\n##### Creating master nodes instance(s)\n"
-  if [ "$MASTER_INSTANCES_DOCKER_VOLUMES" = "true" ]; then
-    for HOST in $OCP_MASTERS ; do
-      VOLUMEID=$(cinder show ${HOST}-docker | grep ' id ' | awk '{print $4}')
+  for HOST in $OCP_MASTERS ; do
+    NETWORKID=$(neutron net-show openshift-network | grep ' id ' | awk '{print $4}')
+    VOLUMEID=$(cinder show ${HOST}-docker | grep ' id ' | awk '{print $4}')
+    if [ "$VOLUMEID" != "" ]; then  
       nova boot --flavor ocpmaster --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-      --nic net-name=$OCP_NETWORK_NAME-network \
+        --nic net-id=$NETWORKID \
+        --security-groups master-sg \
+        --block-device source=volume,dest=volume,device=vdb,id=${VOLUMEID} \
+        --user-data ./cloudinit/$HOST.yaml \
+        $HOST.$OCP_DOMAIN
+    else
+      nova boot --flavor ocpmaster --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
+      --nic net-id=$NETWORKID \
       --security-groups master-sg \
-      --block-device source=volume,dest=volume,device=vdb,id=${VOLUMEID} \
       --user-data ./cloudinit/$HOST.yaml \
       $HOST.$OCP_DOMAIN
-    done
-  else
-    for HOST in $OCP_MASTERS ; do
-      nova boot --flavor ocpmaster --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-      --nic net-name=$OCP_NETWORK_NAME-network \
-      --security-groups master-sg \
-      --user-data ./cloudinit/$HOST.yaml \
-      $HOST.$OCP_DOMAIN
-    done
-  fi
+    fi  
+  done
   echo -e "\n##### Creating infra nodes instance(s)\n"
   for HOST in $OCP_INFRANODES ; do
+    NETWORKID=$(neutron net-show openshift-network | grep ' id ' | awk '{print $4}')
     VOLUMEID=$(cinder show ${HOST}-docker | grep ' id ' | awk '{print $4}')
     nova boot --flavor ocpinfranode --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-    --nic net-name=$OCP_NETWORK_NAME-network \
+    --nic net-id=$NETWORKID \
     --security-groups infranode-sg \
     --block-device source=volume,dest=volume,device=vdb,id=${VOLUMEID} \
     --user-data ./cloudinit/$HOST.yaml \
@@ -279,9 +278,10 @@ if [ "$answer" = "y" ]; then
   done
   echo -e "\n##### Creating app nodes instance(s)\n"
   for HOST in $OCP_APPNODES ; do
+    NETWORKID=$(neutron net-show openshift-network | grep ' id ' | awk '{print $4}')
     VOLUMEID=$(cinder show ${HOST}-docker | grep ' id ' | awk '{print $4}')
     nova boot --flavor ocpappnode --image $RHEL_IMAGE_NAME --key-name $KEYPAIR_NAME \
-    --nic net-name=$OCP_NETWORK_NAME-network \
+    --nic net-id=$NETWORKID \
     --security-groups appnode-sg \
     --block-device source=volume,dest=volume,device=vdb,id=${VOLUMEID} \
     --user-data ./cloudinit/$HOST.yaml \
@@ -290,16 +290,32 @@ if [ "$answer" = "y" ]; then
 fi
 
 ##### Floating IPs creation
-read -p "Do you wish to create floating IPs for the load balancers and bastion instance? (y/n) " answer
+read -p "Do you wish to create floating IPs for the load balancers (in case you have them) and bastion instance? (y/n) " answer
 if [ "$answer" = "y" ]; then
   source ./keystonerc_openshift
   echo -e "\n##### Creating floating IPs\n"
   for HOST in $OCP_LB ; do
-    FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
-    nova floating-ip-associate $HOST.$OCP_DOMAIN $FLOATING_IP
+    FLOATING_IP=$(openstack floating ip create $PUBLIC_NETWORK_NAME | grep " floating_ip_address " | awk '{print $4}')
+    openstack server add floating ip $HOST.$OCP_DOMAIN $FLOATING_IP
+    echo -e "\nAssigned floating IP $FLOATING_IP to host $HOST.$OCP_DOMAIN\n"
   done
-  FLOATING_IP=$(nova floating-ip-create $PUBLIC_NETWORK_NAME | grep $PUBLIC_NETWORK_NAME | awk '{print $4}')
-  nova floating-ip-associate $OCP_BASTION.$OCP_DOMAIN $FLOATING_IP
+  # If there is only one master node and no LBs are defined, it sets the floating IP for the one defined
+  NUM_MASTERS=$(echo $OCP_MASTERS | wc -w)
+  if [[ $NUM_MASTERS -eq 1 && "$OCPLB" == "" ]]; then
+    FLOATING_IP=$(openstack floating ip create $PUBLIC_NETWORK_NAME | grep " floating_ip_address " | awk '{print $4}')
+    openstack server add floating ip $OCP_MASTERS.$OCP_DOMAIN $FLOATING_IP
+    echo -e "\nAssigned floating IP $FLOATING_IP to host $OCP_MASTERS.$OCP_DOMAIN\n"
+  fi
+  # If there is only one infra node, it sets the floating IP for the one defined
+  NUM_INFRANODES=$(echo $OCP_INFRANODES | wc -w)
+  if [[ $NUM_INFRANODES -eq 1 && "$OCPLB" == "" ]]; then
+    FLOATING_IP=$(openstack floating ip create $PUBLIC_NETWORK_NAME | grep " floating_ip_address " | awk '{print $4}')
+    openstack server add floating ip $OCP_INFRANODES.$OCP_DOMAIN $FLOATING_IP
+    echo -e "\nAssigned floating IP $FLOATING_IP to host $OCP_INFRANODES.$OCP_DOMAIN\n"
+  fi
+  FLOATING_IP=$(openstack floating ip create $PUBLIC_NETWORK_NAME | grep " floating_ip_address " | awk '{print $4}')
+  openstack server add floating ip $OCP_BASTION.$OCP_DOMAIN $FLOATING_IP
+  echo -e "\nAssigned floating IP $FLOATING_IP to host $OCP_BASTION.$OCP_DOMAIN\n"
 fi
 
 echo -e "\n##### Thanks for using OpenShift on OpenStack quick installer #####\n\n"
