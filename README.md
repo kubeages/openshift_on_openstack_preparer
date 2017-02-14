@@ -7,6 +7,7 @@ In order to make it work, please copy this script into a folder with these anoth
 
 Releases:
 - v0.1: This release creates everything that is needed to prepare an OCP on OpenStack deployment. 
+- v0.2: This release improves three modules: security groups, instances creation, floating IPs.
 
 Note: 
 - This script doesn´t install prereqs or OCP itself. It´s conceived to help to prepare the environment for OCP deployment.
